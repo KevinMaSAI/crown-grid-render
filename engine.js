@@ -1,0 +1,27 @@
+'use strict';
+const EMPTY=-1,MOUNTAIN=-2,FOG=-3,OBSTACLE=-4;
+function rng(seed){let h=2166136261;for(const c of String(seed))h=Math.imul(h^c.charCodeAt(0),16777619);return ()=>{h+=0x6D2B79F5;let t=h;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return ((t^t>>>14)>>>0)/4294967296;};}
+function neighbors(i,w,h,diagonal=false){let a=[],x=i%w,y=Math.floor(i/w);for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){if((!dx&&!dy)||(!diagonal&&Math.abs(dx)+Math.abs(dy)!==1))continue;let xx=x+dx,yy=y+dy;if(xx>=0&&xx<w&&yy>=0&&yy<h)a.push(yy*w+xx);}return a;}
+const {generateMap}=require('./map-generator'),{randomBytes}=require('node:crypto');
+function makeMap(seed=randomBytes(8).toString('hex'),w,h,count=2,teams=null){return generateMap(seed,w,h,count,{rng,neighbors,teams});}
+const OfficialGame=require('./vendor/replay-utils/Game'),OfficialMap=require('./vendor/replay-utils/Map');
+class Game{
+ constructor({seed,map,names,playerCount=2,teams=null}={}){seed=typeof seed==='string'&&seed.trim()?seed.trim():randomBytes(8).toString('hex');let m=map||makeMap(seed,undefined,undefined,names?.length||playerCount,teams);names=names||m.g.map((_,i)=>i===0?'Anonymous':'[Bot] '+i);this.count=m.g.length;this.teams=Array.isArray(teams)&&teams.length===this.count?teams.slice():null;this.seed=seed;this.w=m.w;this.h=m.h;this.n=m.w*m.h;this.names=names;this.turn=0;this.alive=Array(this.count).fill(true);this.winner=null;this.queues=Array.from({length:this.count},()=>[]);this.events=[];this.metrics=Array.from({length:this.count},(_,i)=>i).map(()=>({moves:0,captures:0,cities:0,found:false}));this.log=[];this.trackMoves=false;this.appliedMoves=[];this.seenGenerals=Array.from({length:this.count},()=>new Set());
+ this.sockets=names.map(name=>({emit(){},gio_username:name}));this.core=new OfficialGame(this.sockets,this.teams);this.core.map=new OfficialMap(m.w,m.h,this.teams);this.core.map._map=m.t.slice();this.core.map._armies=m.a.slice();this.core.generals=m.g.slice();this.core.cities=m.cities.slice();this.core.city_regen=false;
+ this.t=this.core.map._map;this.a=this.core.map._armies;this.generals=this.core.generals;this.cities=new Set(this.core.cities);
+ const handle=this.core.handleAttack.bind(this.core);this.core.handleAttack=(p,from,to,half)=>{let before=this.t[to],general=this.generals.indexOf(to),ok=handle(p,from,to,half);if(ok===false)return false;if(this.trackMoves)this.appliedMoves.push({p,from,to,half:!!half});this.metrics[p].moves++;if(before!==p&&this.t[to]===p){this.metrics[p].captures++;if(this.cities.has(to)){this.metrics[p].cities++;this.record('city',p,to);}if(general>=0){this.alive[general]=false;this.record('general',p,to,general);}}this.cities=new Set(this.core.cities);return ok;};
+ }
+ enqueue(p,from,to,half=false){if(!this.alive[p]||this.winner!==null||!Number.isInteger(from)||!Number.isInteger(to)||from<0||to<0||from>=this.n||to>=this.n||!neighbors(from,this.w,this.h).includes(to)||this.queues[p].length>=64)return false;this.queues[p].push({from,to,half:!!half});return true;}
+ clear(p){this.queues[p]=[];this.core.inputBuffer[p]=[];}
+ record(kind,p,tile,other){let e={turn:this.turn,kind,p,tile,other};this.events.push(e);this.log.push(e);if(this.log.length>200)this.log.shift();}
+ step(){if(this.winner!==null)return;this.turn=this.core.turn+1;this.events=[];if(this.trackMoves)this.appliedMoves=[];for(let p=0;p<this.count;p++)this.core.inputBuffer[p]=this.alive[p]?this.queues[p].map(m=>[m.from,m.to,m.half]):[];
+ this.core.update();for(let p=0;p<this.count;p++)this.queues[p]=this.core.inputBuffer[p].map(m=>({from:m[0],to:m[1],half:m[2]}));
+ for(let p=0;p<this.count;p++){let v=this.visibility(p);for(let enemy=0;enemy<this.count;enemy++){let g=this.generals[enemy];if(enemy!==p&&(!this.teams||this.teams[enemy]!==this.teams[p])&&g>=0&&v[g]&&!this.seenGenerals[p].has(enemy)){this.seenGenerals[p].add(enemy);this.metrics[p].found=true;this.record('found',p,g,enemy);}}}
+ if(this.core.isOver()){this.winner=this.alive.findIndex(Boolean);this.record('win',this.winner,this.generals[this.winner]);}
+ }
+ visibility(p){let visible=Array(this.n).fill(false);for(let i=0;i<this.n;i++)if(this.t[i]===p||this.teams&&this.t[i]>=0&&this.teams[this.t[i]]===this.teams[p]){visible[i]=true;for(let j of neighbors(i,this.w,this.h,true))visible[j]=true;}return visible;}
+ scores(){return Array.from({length:this.count},(_,i)=>i).map(i=>({i,total:this.a.reduce((s,v,k)=>s+(this.t[k]===i?v:0),0),tiles:this.t.filter(v=>v===i).length,dead:!this.alive[i]}));}
+ view(p,full=false){let v=full?Array(this.n).fill(true):this.visibility(p);let terrain=this.t.map((t,i)=>v[i]?t:(t===MOUNTAIN||this.cities.has(i)?OBSTACLE:FOG));let armies=this.a.map((a,i)=>v[i]?a:0);return {turn:this.turn,w:this.w,h:this.h,armies,terrain,cities:[...this.cities].filter(i=>v[i]),generals:this.generals.map((g,i)=>v[g]&&this.alive[i]?g:-1),scores:this.scores(),playerIndex:p,names:this.names,winner:this.winner,teams:this.teams,winningPlayers:this.winner===null?[]:this.teams?this.teams.map((team,i)=>team===this.teams[this.winner]?i:-1).filter(i=>i>=0):[this.winner],alive:this.alive.slice(),playerCount:this.count,queue:this.queues[p]?.length||0};}
+ update(p){let v=this.view(p);let map=[this.w,this.h,...v.armies,...v.terrain];return {turn:this.turn,map_diff:[0,map.length,...map],cities_diff:[0,v.cities.length,...v.cities],generals:v.generals,scores:v.scores,teams:this.teams};}
+}
+module.exports={Game,makeMap,neighbors,rng,EMPTY,MOUNTAIN,FOG,OBSTACLE};

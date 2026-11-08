@@ -1,0 +1,8 @@
+ 'use strict';
+const fs=require('node:fs'),path=require('node:path'),{Game}=require('./engine');
+function read(dir,id){if(!/^[a-zA-Z0-9_-]+$/.test(id))throw Error('Invalid replay');const file=path.join(dir,id+'.jsonl');if(fs.statSync(file).size>3*1024*1024)throw Error('Replay too large');return decode(fs.readFileSync(file,'utf8'));}
+function decode(text){const rows=text.trim().split('\n').map(s=>JSON.parse(s));if(rows[0]?.kind!=='start'||(rows.at(-1)?.kind!=='end'||rows.at(-1)?.reason==='quota'))throw Error('对局尚未归档');return rows;}
+function list(dir){if(!fs.existsSync(dir))return [];return fs.readdirSync(dir).filter(n=>n.endsWith('.jsonl')).flatMap(n=>{try{const id=n.slice(0,-6),rows=read(dir,id),s=rows[0],end=rows.at(-1);return [{id,room:s.room,names:s.names,teams:s.teams,seed:s.seed,botVersion:s.botVersion,date:+id.split('-')[0],turn:rows.findLast(r=>r.kind==='turn')?.turn||0,winner:end.winner,reason:end.reason}];}catch{return [];}}).sort((a,b)=>b.date-a.date);}
+function replay(dir,id){return replayRows(read(dir,id));}
+function replayRows(rows){const s=rows[0],g=new Game({map:s.map,names:s.names,teams:s.teams,seed:s.seed}),frames=[];const frame=()=>({turn:g.turn,t:g.t.slice(),a:g.a.slice(),generals:g.generals.map((x,i)=>g.alive[i]?x:-1),cities:[...g.cities],scores:g.scores()});frames.push(frame());for(const row of rows)if(row.kind==='turn'){if(row.turn!==g.turn+1)throw Error('回放记录不连续');for(const m of row.moves||[])g.enqueue(m.p,m.from,m.to,m.half);g.step();frames.push(frame());}return {names:s.names,teams:s.teams,seed:s.seed,w:g.w,h:g.h,botVersion:s.botVersion,end:rows.at(-1),frames};}
+module.exports={list,replay,decode,replayRows};

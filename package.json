@@ -1,0 +1,25 @@
+{
+  "dependencies": {
+    "pg": "^8.23.1",
+    "socket.io": "^4.8.4",
+    "socket.io-client": "^4.8.4"
+  },
+  "name": "crown-grid",
+  "version": "7.0.0",
+  "private": true,
+  "description": "Independent local grid strategy game with fog-of-war bots",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js",
+    "test:api": "node work/api-test.js",
+    "test:multiplayer": "node work/multiplayer-test.js",
+    "test:teams": "node work/team-test.js",
+    "test:tactics": "node work/tactics-test.js",
+    "bench:bot": "node work/benchmark-v3.js final 16",
+    "test:maps": "node work/bot-v5/map-tests.js",
+    "test:bot-v5": "node work/bot-v5/tactical-tests.js"
+  },
+  "devDependencies": {
+    "pg-mem": "^3.0.14"
+  }
+}

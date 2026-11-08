@@ -1,0 +1,12 @@
+{
+  "version": "v7",
+  "build": "542c80d5bf00890e8b51fe87d81e7c7a6b42c2877bc7c9aa2f9964a2561118e9",
+  "files": [
+    "bot-strong.js",
+    "bot-defense.js",
+    "bot-core.js",
+    "bot-planner.js",
+    "bot-tactics.js",
+    "bot-rush-defense.js"
+  ]
+}
